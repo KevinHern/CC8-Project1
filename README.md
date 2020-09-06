@@ -6,3 +6,5 @@ Si se puede sacar el proyecto :D
 Con dedicación a Jorge Chaclan y Etson
 
 # #ChaclanDejanosTrabajarEnParejas :(
+# #ProyectoFinalEnGrupo :(
+# #NoSeasMalaOnda :(
