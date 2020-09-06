@@ -90,6 +90,38 @@ def get_filename(logger, udpsocket, destiny_port):
     return filename
 
 
+def save_file(logger, udpsocket, destiny_port, filename):
+    # Creating File
+    file = open(filename, "w")
+
+    logger.log_this("Starting file transfer")
+    while True:
+        try:
+            response = udpsocket.recvfrom(tcp.socket_buffer_size)
+            address = response[1]
+            logger.log_this("Received segment from address: <" + str(address[0]) + ", " + str(address[1]) + ">")
+            header_fields, body_response = tcp.process_segment(logger, response[0], 0)
+            if header_fields is None:
+                continue
+            if (header_fields[5] & tcp.PUSH) > 0:
+                logger.log_this("Data received. Saving byte stream...")
+                # Sending ACK
+                seq = 50
+                header = tcp.make_tcp_header_words(src_port, header_fields[0], seq, header_fields[2] + 1,
+                                                   tcp.ACK)
+                segment = tcp.encode_segment(header, [])
+                tcp.send_ack(logger, udpsocket, address, seq + 1, segment, 1)
+
+                # Saving byte stream here. Create a Thread to handle this operation
+
+            else:
+                logger.log_this("Rejected connection. SYN not found")
+        except timeout:
+            break
+    logger.log_this("File Transfer complete.")
+    pass
+
+
 def end(logger, udpsocket, destiny_port):
     while True:
         try:
@@ -137,7 +169,6 @@ def server_run(logger):
     udpsocket.settimeout(tcp.RTT)
     udpsocket.bind((host, port))
 
-
     # --------------------------- HANDSHAKE
 
     client_address, client_port = handshake(logger, udpsocket)
@@ -146,7 +177,10 @@ def server_run(logger):
 
     response = get_filename(logger, udpsocket, client_port)
     logger.log_this("Filename received: " + response)
+
     # --------------------------- SAVING FILE
+
+
 
     # --------------------------- END CONNECTION
 

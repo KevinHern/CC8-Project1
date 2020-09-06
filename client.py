@@ -7,36 +7,60 @@ import tcp
 src_port = "KH"
 message_number = 1
 
-def make_file_words(filename):
-    body_words = []
+
+def hex_stream_to_32words(hex_stream):
+    total_hexes = len(hex_stream)
+    hexes_read = 0
+    words = []
+    word_count = 0
+    hexes_to_read = 0
+
+    # The stream is a string of hexes. Time to decode them
+    # To make things easier, make chunks of 8 hexes
+    while hexes_read < total_hexes:
+        # Setting how many hexes to read.
+        # There may be cases that there are less than 8 hexes left to read
+        hexes_to_read = 8 if (total_hexes - hexes_read) >= 8 else (total_hexes - hexes_read)
+
+        # Actually reading chunks
+        start = 8 * word_count
+        new_word = hex_stream[start:start + hexes_to_read]
+
+        # Converting string hex into a number of 32 bits
+        new_word = int(new_word, 16)  # << (32 - (4 * hexes_to_read))
+        new_word = new_word << (32 - (4 * hexes_to_read))
+        words += [new_word]
+
+        # Updating auxiliary variables
+        word_count += 1
+        hexes_read += hexes_to_read
+
+    '''
+    print("Received hex stream: " + hex_stream)
+    for word in words:
+        print("Hex word: " + format(word, 'x').upper())
+    '''
+    return [words]
+
+
+# Extract the filename's bytes, then read chunks of 730 bytes.
+# Then for each chunk, all the 32 bit words are made
+# TL;DR: Get filename, return each body segment to send
+def make_file_segments(filename):
+    body_segments = []
     if filename is not None:
-        batch_size = 4  # Read in chunks of 32 bit words
+        batch_size = 730  # Read in chunks of 730 bit words
         with open(filename, "rb") as file:
             while True:
                 piece = file.read(batch_size)
                 if piece == b'':
                     break
 
-                body_words += [int(piece.hex(), 16)]
+                hex_stream = int(piece.hex(), 16)
+                body_segments += hex_stream_to_32words(format(hex_stream, 'x').upper())
 
             file.close()
-
-            '''
-            file_size = os.path.getsize(filename)
-            bytes_read = 0
-            batch_size = 1460  # 1460 Bytes
-            while bytes_read < file_size:
-                bytes_to_read = batch_size if (bytes_read + batch_size) < file_size else file_size - bytes_read
-                piece = file.read(bytes_to_read)
-                print(piece)
-
-                bytes_read += bytes_to_read
-
-            '''
-    return body_words
-
-
-
+    return body_segments
 
 
 def handshake(logger, udpsocket, address):
@@ -121,6 +145,7 @@ def send_file_extension(logger, udpsocket, destiny_port, address, files):
             break
         else:
             logger.log_this("Received a wrong response, resending")
+    return filename_to_send
 
 
 def end(logger, udpsocket, destiny_port, address):
@@ -181,47 +206,27 @@ def client_run(logger):
     # --------------------------- SEND FILE EXTENSION
     # Ask what file to send
     file_list = ["test.txt", "hola.java", "sonido.mp3", "genial.png"]
-    send_file_extension(logger, udpsocket, dst_port, address, file_list)
-
+    filename = send_file_extension(logger, udpsocket, dst_port, address, file_list)
 
     # --------------------------- READ FILE
 
-    '''
-    file_words = []
-    while True:
-        try:
-            filename = input("Provide the file name:\t")
-            file_words = make_file_words(filename)
-            logger.log_this("Reading and processing <" + filename + ">")
-            break
-        except:
-            logger.log_this("File not found <" + filename + ">")
-
-    tcp_body_segments = []
-    while len(file_words) > 0:
-        words_to_extract = 1460 if len(file_words) >= 1460 else len(file_words)
-        temp_list = []
-        for i in range(words_to_extract):
-            temp_list += [file_words.pop(0)]
-        tcp_body_segments += [temp_list]
+    logger.log_this("Reading file: " + filename)
+    body_segments = make_file_segments(filename)  # Basically, the total amount of tcp segments to send
 
     # --------------------------- SEND FILE
 
-    sequence = 100
-    options = []
-    segment_number = 1
-    for segment_body_words in tcp_body_segments:
-        segment_header_words = make_tcp_header_words("DT", sequence, len(options) + 5, 0x00000000, options)
-        segment = encode_segment(segment_header_words, segment_body_words)
+    sequence = 51
+    segment_number = 4
+    logger.log_this("Starting file transfer...")
+    for body_segment in body_segments:
+        segment_header_words = tcp.make_tcp_header_words(src_port, dst_port, sequence, tcp.PUSH)
+        segment = tcp.encode_segment(segment_header_words, body_segment)
         # Send here
-        client_send(logger, udpsocket, address, sequence + 1, segment, segment_number)
+        tcp.send(logger, udpsocket, address, sequence + 1, segment, segment_number)
         sequence += + 1
         segment_number += 1
 
-    
-    
-    '''
-
+    logger.log_this("Transfer done")
     # --------------------------- END CONNECTION
 
     end(logger, udpsocket, dst_port, address)
