@@ -3,15 +3,16 @@ import os
 import random
 import log
 
-socket_buffer_size = 2000
+socket_buffer_size = 1480       # 1460 bytes from payload + 20 bytes from header
 window_size = 0x0001
-RTT = 2
+RTT = 5                         # 5 Seconds of Timeout
 const = 0x00000000
+FIN = 0x001
 SYN = 0x002
 ACK = 0x010
 
 def process_segment(logger, response, expected_ack):        # Proceso el Stream de hex que he recibido
-    # Split segment into 32 bit words
+    # Getting the response and setting auxiliary variables
     response = response.decode('utf-8').upper()
     total_hexes = len(response)
     hexes_read = 0
@@ -20,36 +21,50 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
     hexes_to_read = 0
     #print("Received: " + response + "\n")
     #print("Length: " + str(total_hexes) + "\n")
+
+    # The stream is a string of hexes. Time to decode them
+    # To make things easier, make chunks of 8 hexes
     while hexes_read < total_hexes:
+        # Setting how many hexes to read.
+        # There may be cases that there are less than 8 hexes left to read
         hexes_to_read = 8 if (total_hexes - hexes_to_read) >= 8 else (total_hexes - hexes_to_read)
 
+        # Actually reading chunks
         start = 8 * word_count
         new_word = response[start:start + hexes_to_read]
         print(new_word + "\n")
+
+        # Converting string hex into a number of 32 bits
         segment_words += [int(new_word, 16) << (32 - (4*hexes_to_read))]
+
+        # Updating auxiliary variables
         word_count += 1
         hexes_read += hexes_to_read
 
     # --------------------------------- CHECKSUM
-    print(segment_words)
 
+    # Extracting the checksum that is burned in the header of the received segment
     checksum = (segment_words[4] >> 16) & 0x0000FFFF
+
+    # Setting said checksum to 0.
+    # This is done accordingly to the RFC 793 to calculate the checksum on the receiving side
     segment_words[4] = segment_words[4] & 0x0
+
+    # Calculate the checksum
     this_checksum = 0x00000000
     for word in segment_words:
         this_checksum += ((word & 0xFFFF0000) >> 16) + (word & 0x0000FFFF)
-
     this_checksum = ~this_checksum & 0x0000FFFF
 
 
 
-    print("(Decoding) Calculated checksum: " + hex(this_checksum))
-    print("(Encoded) Calculated checksum: " + hex(checksum))
+    print("Header burned checksum: " + hex(this_checksum))
+    print("Calculated checksum: " + hex(checksum))
     if checksum != this_checksum:
         logger.log_this("Checksums do not match, discarding segment.")
         return None, "Checksum"
 
-    # --------------------------------- PROCESS
+    # --------------------------------- PROCESS SEGMENT
 
     # Process
 
@@ -66,16 +81,17 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
 
     # Offset, flags & window
     offset = (segment_words[0] >> 28) & 0x0000000F
-    flags = (segment_words[0] & 0x0FFF0000) >> 16
+    flags = (segment_words[0] >> 16) & 0x00000FFF
     windows = segment_words.pop(0) & 0x0000FFFF
 
-    if (expected_ack == ack) and ((flags & (ACK << 16)) > 0):
+    if (expected_ack == ack) and ((flags & ACK) > 0):
         logger.log_this("Acks do not match, discarding segment.")
         return None, "Ack"
 
     # Urgent pointer
     urgent_pointer = (segment_words.pop(0) & 0x0000FFFF)  # A total of 5 pop operations have been done
 
+    '''
     # Options
     options_words = []
     for i in range(offset - 5):
@@ -109,11 +125,12 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
             temp_option = []
         if must_break:
             break
-
     header_words = [srcp, dstp, sequence, ack, offset, flags, windows, checksum, urgent_pointer, options]
+    '''
+    header_fields = [srcp, dstp, sequence, ack, offset, flags, windows, checksum, urgent_pointer]
     body_words = segment_words
 
-    return header_words, body_words
+    return header_fields, body_words
 
 
 def read(logger, udpsocket, address):
@@ -121,7 +138,14 @@ def read(logger, udpsocket, address):
     logger.log_this("Response received from <" + address[0] +", " + str(address[1]) + ">")
     return response
 
-# Envio el stream de hex y espero un ACK. El TIMEOUT puede lanzarse
+
+# Just sends and ACK
+def send_ack(logger, udpsocket, address, message, message_number):
+    udpsocket.sendto(str.encode(message), address)
+    logger.log_this("TCP ACK #" + str(message_number) + " sent...")
+
+
+# Send the hex stream AND expect an ACK
 def send(logger, udpsocket, address, expected_ack, message, message_number):
     print("Message: " + message)
     while True:
@@ -130,9 +154,9 @@ def send(logger, udpsocket, address, expected_ack, message, message_number):
         try:
             # Received TCP segment
             response = read(logger, udpsocket, address)
-
             print("(response) Received: ")
             print(response)
+
             # Processing
             header_words, body_words = process_segment(logger, response[0], expected_ack)
 
@@ -154,7 +178,7 @@ def do_word(word32, data, bits_to_move):
 
 # Hacer el header del TCP
 # Devuelve: Una lista con todas las palabras del header en hex.
-def make_tcp_header_words(src_port, dst_port, seq_init, flags, options):
+def make_tcp_header_words(src_port, dst_port, seq_number, flags):
     # Generating hex encoded header
     header_words = [0x00000000 for i in range(5)]
 
@@ -162,7 +186,6 @@ def make_tcp_header_words(src_port, dst_port, seq_init, flags, options):
 
     print("\n//----- CREANDO HEADER -----//\n")
     # SRC and DST Ports
-
     print("\n//----- PUERTOS -----//\n")
     print("SRC: " + src_port + "\t|\tDST: " + dst_port)
     ports = [ord(c) for c in src_port] + [ord(c) for c in dst_port]
@@ -172,15 +195,14 @@ def make_tcp_header_words(src_port, dst_port, seq_init, flags, options):
     for x in ports:
         print(hex(x))
 
-        # Ports
-        for i in range(4):
-            header_words[0] = do_word(header_words[0], ports[i] & 0x0000FFFF, 8 * (3 - i))
+    for i in range(4):
+        header_words[0] = do_word(header_words[0], ports[i] & 0x0000FFFF, 8 * (3 - i))
 
     print("// Primer Word del header:")
     print(hex(header_words[0]))
 
     print("\n//----- SEQUENCE -----//\n")
-    sequence_number = seq_init
+    sequence_number = seq_number
     header_words[1] = do_word(header_words[1], sequence_number & 0xFFFFFFFF, 0)
     print("// Sequence Number: " + str(sequence_number))
     print("// Hex Sequence Number: " + hex(sequence_number))
@@ -195,9 +217,8 @@ def make_tcp_header_words(src_port, dst_port, seq_init, flags, options):
     print("// Tercer Word del header: " + hex(header_words[2]))
 
     print("\n//----- RESERVED, CONTROL FLAGS & WINDOW SIZE -----//\n")
-
+    # Data Offset
     data_offset = 5
-
     print("// Data Offset Number: " + str(data_offset))
     print("// Hex Data Offset Number: " + hex(data_offset))
 
@@ -219,6 +240,8 @@ def make_tcp_header_words(src_port, dst_port, seq_init, flags, options):
 
     print("\n//----- CHECKSUM Y URGENT POINTER -----//\n")
     # Checksum
+    # Initialize Checksum to 0. It is calculated when we have both the header and the body hexes
+    # Specific calculation point: encode_segment()
     checksum = 0
     print("// Checksum Size: " + str(checksum))
     print("// Hex Checksum Size: " + hex(checksum))
@@ -260,7 +283,11 @@ def make_tcp_header_words(src_port, dst_port, seq_init, flags, options):
     # Returns in HEX all the words used to construct the header
     return header_words
 
-
+# Here we encode all the 32 bit words hexes into a single string (header and body)
+# Note that there may be cases you have to add 0 to complete the 32 bit words.
+# Example: convert 0x2C
+# Adding the corresponding 0s to the string to complete the word would look like this:
+# 0x0000002C
 def encode_segment(header_words, body_words):
     hex_stream = ""
     all_words = header_words + body_words
