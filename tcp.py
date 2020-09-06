@@ -20,23 +20,29 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
     word_count = 0
     segment_words = []
     hexes_to_read = 0
-    #print("Received: " + response + "\n")
-    #print("Length: " + str(total_hexes) + "\n")
+    print("Received: " + response + "\n")
+    print("Length: " + str(total_hexes) + "\n")
 
     # The stream is a string of hexes. Time to decode them
     # To make things easier, make chunks of 8 hexes
     while hexes_read < total_hexes:
         # Setting how many hexes to read.
         # There may be cases that there are less than 8 hexes left to read
-        hexes_to_read = 8 if (total_hexes - hexes_to_read) >= 8 else (total_hexes - hexes_to_read)
+        hexes_to_read = 8 if (total_hexes - hexes_read) >= 8 else (total_hexes - hexes_read)
 
         # Actually reading chunks
         start = 8 * word_count
         new_word = response[start:start + hexes_to_read]
-        #print(new_word + "\n")
+        #print("Hex read: " + new_word)
 
         # Converting string hex into a number of 32 bits
-        segment_words += [int(new_word, 16) << (32 - (4*hexes_to_read))]
+        new_word = int(new_word, 16) #<< (32 - (4 * hexes_to_read))
+        #print("Hexes to read: " + str(hexes_to_read))
+        #print("Bits to shift left: " + str(32 - (4 * hexes_to_read)))
+        new_word = new_word << (32 - (4 * hexes_to_read))
+        #print("Segment hex word: " + hex(new_word))
+        segment_words += [new_word]
+
 
         # Updating auxiliary variables
         word_count += 1
@@ -54,6 +60,7 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
     # Calculate the checksum
     this_checksum = 0x00000000
     for word in segment_words:
+        #print("Extracted word: " + hex(word))
         this_checksum += ((word & 0xFFFF0000) >> 16) + (word & 0x0000FFFF)
     this_checksum = ~this_checksum & 0x0000FFFF
 
@@ -297,21 +304,40 @@ def encode_segment(header_words, body_words):
         checksum += ((word & 0xFFFF0000) >> 16) + (word & 0x0000FFFF)
     checksum = (~checksum << 16) & 0xFFFF0000
 
-    all_words[4] = do_word(all_words[4], checksum, 16)
+    header_words[4] = do_word(header_words[4], checksum, 0)
 
     #print("\n//----- CALCULANDO CHECKSUM -----//\n")
     #print("(Encoding) Calculated Checksum: " + hex(checksum))
     #print("(Encoding) New Header Words: ")
 
-    # Encode segment
-    for word in all_words:
+    # Encode header segment
+    for word in header_words:
         hex_word = format(word, 'x').upper()
+        #print("Hex Word to Encode: " + hex_word)
+        # Adding 0s to the string
         if len(hex_word) < 8:
             for i in range(8 - len(hex_word)):
                 hex_word = "0" + hex_word
-        #print(hex_word)
+        #print("Hex Word Encoded: " + hex_word)
         hex_stream += hex_word
 
-    #print("\n//----- HEX STREAM A ENVIAR -----//\n")
-    #print(hex_stream)
+    # Encode body segment
+    for word in body_words:
+        hex_word = format(word, 'x').upper()
+
+        # Checking how much to send
+        if word & 0x00FFFFFF == 0:
+            hex_word = hex_word[0:2]
+        elif word & 0x0000FFFF == 0:
+            hex_word = hex_word[0:4]
+        elif word & 0x000000FF == 0:
+            hex_word = hex_word[0:6]
+        else:
+            pass
+
+        hex_stream += hex_word
+
+
+    print("\n//----- HEX STREAM A ENVIAR -----//\n")
+    print(hex_stream)
     return hex_stream

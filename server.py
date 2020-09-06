@@ -5,6 +5,7 @@ import tcp
 import log
 
 src_port = "DT"
+message_number = 1
 
 def handshake(logger, udpsocket):
     # Getting SYN
@@ -61,21 +62,60 @@ def get_filename(logger, udpsocket, destiny_port):
                 header = tcp.make_tcp_header_words(src_port, destiny_port, seq, header_fields[2] + 1, tcp.ACK)
                 segment = tcp.encode_segment(header, [])
                 tcp.send_ack(logger, udpsocket, address, segment, 2)
-
-                logger.log_this("Got Filename")
                 break
             else:
-                logger.log_this("Rejected connection. SYN not found")
+                logger.log_this("Rejected segment")
         except timeout:
             pass
 
     # Process the real filename
+    filename = ""
+    for word in body_response:
+        # Checking how much to convert
+        chars_to_convert = 0
+        if word & 0x00FFFFFF == 0:
+            chars_to_convert = 1
+        elif word & 0x0000FFFF == 0:
+            chars_to_convert = 2
+        elif word & 0x000000FF == 0:
+            chars_to_convert = 3
+        else:
+            chars_to_convert = 4
 
-    return body_response
+        for i in range(chars_to_convert):
+            int_to_char = (word >> (8*(3-i))) & 0x000000FF   # Shift right arithmetic
+            filename += chr(int_to_char)
+            #print(chr(int_to_char))
+
+    return filename
 
 
-def end():
-    pass
+def end(logger, udpsocket, destiny_port):
+    while True:
+        try:
+            response = udpsocket.recvfrom(tcp.socket_buffer_size)
+            address = response[1]
+            logger.log_this("Received segment from address: <" + str(address[0]) + ", " + str(address[1]) + ">")
+            header_fields, body_response = tcp.process_segment(logger, response[0], 0)
+            if header_fields is None:
+                continue
+            # for word in header_fields:
+            # print("Type: " + str(type(word)) + "\tContent: " + str(word))
+            if (header_fields[5] & tcp.FIN) > 0:
+                logger.log_this("FIN received. Terminating connection...")
+                # Sending SYN + ACK
+                seq = 20
+                header = tcp.make_tcp_header_words(src_port, destiny_port, seq, header_fields[2] + 1,
+                                                   tcp.ACK | tcp.FIN)
+                segment = tcp.encode_segment(header, [])
+                tcp.send(logger, udpsocket, address, seq + 1, segment, 1)
+                break
+            else:
+                logger.log_this("Rejected connection. FIN not found")
+        except timeout:
+            pass
+
+    logger.log_this("Connection terminated successfully")
 
 
 def server_run(logger):
@@ -105,9 +145,9 @@ def server_run(logger):
     # --------------------------- GET FILE EXTENSION
 
     response = get_filename(logger, udpsocket, client_port)
-
+    logger.log_this("Filename received: " + response)
     # --------------------------- SAVING FILE
 
     # --------------------------- END CONNECTION
 
-    end()
+    end(logger, udpsocket, client_port)

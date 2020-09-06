@@ -5,6 +5,7 @@ import log
 import tcp
 
 src_port = "KH"
+message_number = 1
 
 def make_file_words(filename):
     body_words = []
@@ -81,19 +82,34 @@ def send_file_extension(logger, udpsocket, destiny_port, address, files):
     filename_to_send = ""
     while True:
         option = int(input("Your option: \t"))
-        if option > 5 or option < 1:
+        if option > 4 or option < 1:
             print("Select a valid option")
             continue
         else:
-            filename_to_send = files[i]
-            logger.log_this("Selected " + files[i] + " to send.")
+            filename_to_send = files[option-1]
+            logger.log_this("Selected " + files[option-1] + " to send.")
             break
+
+    # Encoding filename
+    filename_chars = [ord(c) for c in filename_to_send]
+    print(filename_chars)
+    num_body_words = (len(filename_chars)//4) + (1 if len(filename_chars)%4 > 0 else 0)
+    body_words = []
+    for i in range(num_body_words):
+        body_words += [0x00000000]
+        for j in range(4):
+            if len(filename_chars) == 0:
+                break
+            body_words[i] = tcp.do_word(body_words[i], filename_chars.pop(0) & 0x000000FF, 8 * (3 - j))
+
+    print("Encoded filename: ")
+    print(body_words)
 
     # ----------------------- SEND FILENAME
 
     seq = 50
     header = tcp.make_tcp_header_words(src_port, destiny_port, seq, 0, tcp.PUSH)
-    segment = tcp.encode_segment(header, [])
+    segment = tcp.encode_segment(header, body_words)
 
     # Send and get ACK
     header_fields, body_response = [], []
@@ -107,7 +123,35 @@ def send_file_extension(logger, udpsocket, destiny_port, address, files):
             logger.log_this("Received a wrong response, resending")
 
 
-def end(seq):
+def end(logger, udpsocket, destiny_port, address):
+    logger.log_this("Terminating connection...")
+
+    seq = 20
+    header = tcp.make_tcp_header_words(src_port, destiny_port, seq, 0, tcp.FIN)
+    # print(header)
+    segment = tcp.encode_segment(header, [])
+
+    # Send and get ACK + FIN
+    header_fields, body_response = [], []
+    while True:
+        logger.log_this("Sending FIN. SEQ = " + str(seq) + ". Expected ACK: " + str(seq + 1))
+        header_fields, body_response = tcp.send(logger, udpsocket, address, seq + 1, segment, 1)
+        if ((header_fields[5] & (tcp.ACK | tcp.FIN)) > 0) and ((seq + 1) == header_fields[3]):
+            logger.log_this("ACK Received. Sever terminating connection too")
+            # Send ACK
+            seq += 1
+            header = tcp.make_tcp_header_words(src_port, destiny_port, seq, header_fields[2] + 1, tcp.ACK)
+            segment = tcp.encode_segment(header, [])
+
+            # Probably should make a new loop in case the server does not receive the ACK... eh
+            logger.log_this("Enviando ACK. SEQ =" + str(seq))
+            tcp.send_ack(logger, udpsocket, address, segment, 2)
+            break
+        else:
+            logger.log_this("Received a wrong response, resending")
+
+
+    logger.log_this("Connection terminated successfully...")
     pass
 
 
@@ -174,9 +218,10 @@ def client_run(logger):
         sequence += + 1
         segment_number += 1
 
-    # --------------------------- END CONNECTION
+    
     
     '''
 
-    end_seq = random.randint(500,1000)
-    end(end_seq)
+    # --------------------------- END CONNECTION
+
+    end(logger, udpsocket, dst_port, address)
