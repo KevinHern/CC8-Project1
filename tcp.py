@@ -9,6 +9,7 @@ RTT = 5                         # 5 Seconds of Timeout
 const = 0x00000000
 FIN = 0x001
 SYN = 0x002
+PUSH = 0x008
 ACK = 0x010
 
 def process_segment(logger, response, expected_ack):        # Proceso el Stream de hex que he recibido
@@ -32,7 +33,7 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
         # Actually reading chunks
         start = 8 * word_count
         new_word = response[start:start + hexes_to_read]
-        print(new_word + "\n")
+        #print(new_word + "\n")
 
         # Converting string hex into a number of 32 bits
         segment_words += [int(new_word, 16) << (32 - (4*hexes_to_read))]
@@ -56,24 +57,20 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
         this_checksum += ((word & 0xFFFF0000) >> 16) + (word & 0x0000FFFF)
     this_checksum = ~this_checksum & 0x0000FFFF
 
-
-
-    print("Header burned checksum: " + hex(this_checksum))
-    print("Calculated checksum: " + hex(checksum))
+    #print("Header burned checksum: " + hex(this_checksum))
+    #print("Calculated checksum: " + hex(checksum))
     if checksum != this_checksum:
         logger.log_this("Checksums do not match, discarding segment.")
         return None, "Checksum"
 
     # --------------------------------- PROCESS SEGMENT
 
-    # Process
-
     # Ports
     srcp = chr((segment_words[0] & 0xFF000000) >> 24) + chr((segment_words[0] & 0x00FF0000) >> 16)
     dstp = chr((segment_words[0] & 0x0000FF00) >> 8) + chr((segment_words[0] & 0x000000FF))
 
     segment_words.pop(0)
-    print("Source: " + srcp + "\nDestiny: " + dstp)
+    #print("Source: " + srcp + "\nDestiny: " + dstp)
 
     # Seq & Ack
     sequence = segment_words.pop(0)
@@ -84,7 +81,9 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
     flags = (segment_words[0] >> 16) & 0x00000FFF
     windows = segment_words.pop(0) & 0x0000FFFF
 
-    if (expected_ack == ack) and ((flags & ACK) > 0):
+    #print("Header burned ack: " + hex(expected_ack))
+    #print("Expected ACK: " + hex(ack))
+    if (expected_ack != ack) and ((flags & ACK) > 0):
         logger.log_this("Acks do not match, discarding segment.")
         return None, "Ack"
 
@@ -147,15 +146,15 @@ def send_ack(logger, udpsocket, address, message, message_number):
 
 # Send the hex stream AND expect an ACK
 def send(logger, udpsocket, address, expected_ack, message, message_number):
-    print("Message: " + message)
+    #print("Message: " + message)
     while True:
         udpsocket.sendto(str.encode(message), address)
         logger.log_this("TCP segment #" + str(message_number) + " sent...")
         try:
             # Received TCP segment
             response = read(logger, udpsocket, address)
-            print("(response) Received: ")
-            print(response)
+            #print("(response) Received: ")
+            #print(response)
 
             # Processing
             header_words, body_words = process_segment(logger, response[0], expected_ack)
@@ -178,82 +177,82 @@ def do_word(word32, data, bits_to_move):
 
 # Hacer el header del TCP
 # Devuelve: Una lista con todas las palabras del header en hex.
-def make_tcp_header_words(src_port, dst_port, seq_number, flags):
+def make_tcp_header_words(src_port, dst_port, seq_number, ack_number, flags):
     # Generating hex encoded header
     header_words = [0x00000000 for i in range(5)]
 
     # -----------------------------------------------
 
-    print("\n//----- CREANDO HEADER -----//\n")
+    #print("\n//----- CREANDO HEADER -----//\n")
     # SRC and DST Ports
-    print("\n//----- PUERTOS -----//\n")
-    print("SRC: " + src_port + "\t|\tDST: " + dst_port)
+    #print("\n//----- PUERTOS -----//\n")
+    #print("SRC: " + src_port + "\t|\tDST: " + dst_port)
     ports = [ord(c) for c in src_port] + [ord(c) for c in dst_port]
-    print("// Ports Integer encoding: ")
-    print(ports)
-    print("// Ports Hex Encoding: ")
-    for x in ports:
-        print(hex(x))
+    #print("// Ports Integer encoding: ")
+    #print(ports)
+    #print("// Ports Hex Encoding: ")
+    #for x in ports:
+    #    print(hex(x))
 
     for i in range(4):
         header_words[0] = do_word(header_words[0], ports[i] & 0x0000FFFF, 8 * (3 - i))
 
-    print("// Primer Word del header:")
-    print(hex(header_words[0]))
+    #print("// Primer Word del header:")
+    #print(hex(header_words[0]))
 
-    print("\n//----- SEQUENCE -----//\n")
+    #print("\n//----- SEQUENCE -----//\n")
     sequence_number = seq_number
     header_words[1] = do_word(header_words[1], sequence_number & 0xFFFFFFFF, 0)
-    print("// Sequence Number: " + str(sequence_number))
-    print("// Hex Sequence Number: " + hex(sequence_number))
-    print("// Segundo Word del header: " + hex(header_words[1]))
+    #print("// Sequence Number: " + str(sequence_number))
+    #print("// Hex Sequence Number: " + hex(sequence_number))
+    #print("// Segundo Word del header: " + hex(header_words[1]))
 
-    print("\n//----- ACK -----//\n")
+    #print("\n//----- ACK -----//\n")
     # Ack Number
-    acknowledgment_number = sequence_number + 1
+    acknowledgment_number = ack_number
     header_words[2] = do_word(header_words[2], acknowledgment_number & 0xFFFFFFFF, 0)
-    print("// Acknowledgment Number: " + str(acknowledgment_number))
-    print("// Hex Acknowledgment Number: " + hex(acknowledgment_number))
-    print("// Tercer Word del header: " + hex(header_words[2]))
+    #print("// Acknowledgment Number: " + str(acknowledgment_number))
+    #print("// Hex Acknowledgment Number: " + hex(acknowledgment_number))
+    #print("// Tercer Word del header: " + hex(header_words[2]))
 
-    print("\n//----- RESERVED, CONTROL FLAGS & WINDOW SIZE -----//\n")
+    #print("\n//----- RESERVED, CONTROL FLAGS & WINDOW SIZE -----//\n")
     # Data Offset
     data_offset = 5
-    print("// Data Offset Number: " + str(data_offset))
-    print("// Hex Data Offset Number: " + hex(data_offset))
+    #print("// Data Offset Number: " + str(data_offset))
+    #print("// Hex Data Offset Number: " + hex(data_offset))
 
     # Control Flags
     ctrl_flags = 0x000 | flags
-    print("// Control Flags: " + str(ctrl_flags))
-    print("// Hex Control Flags: " + hex(ctrl_flags))
+    #print("// Control Flags: " + str(ctrl_flags))
+    #print("// Hex Control Flags: " + hex(ctrl_flags))
 
     # Window Size
     window = window_size
-    print("// Window Size: " + str(window_size))
-    print("// Hex Window Size: " + hex(window_size))
+    #print("// Window Size: " + str(window_size))
+    #print("// Hex Window Size: " + hex(window_size))
 
     # Data offset, flags and window size
     header_words[3] = do_word(header_words[3], data_offset & 0x0000000F, 28)
     header_words[3] = do_word(header_words[3], ctrl_flags & 0x00000FFF, 16)
     header_words[3] = do_word(header_words[3], window_size & 0x0000FFFF, 0)
-    print("// Cuarto Word del header: " + hex(header_words[3]))
+    #print("// Cuarto Word del header: " + hex(header_words[3]))
 
-    print("\n//----- CHECKSUM Y URGENT POINTER -----//\n")
+    #print("\n//----- CHECKSUM Y URGENT POINTER -----//\n")
     # Checksum
     # Initialize Checksum to 0. It is calculated when we have both the header and the body hexes
     # Specific calculation point: encode_segment()
     checksum = 0
-    print("// Checksum Size: " + str(checksum))
-    print("// Hex Checksum Size: " + hex(checksum))
+    #print("// Checksum Size: " + str(checksum))
+    #print("// Hex Checksum Size: " + hex(checksum))
 
     # Urgent Pointer
     urgent_pointer = 0
-    print("// Urgent Pointer Size: " + str(urgent_pointer))
-    print("// Hex Urgent Pointer Size: " + hex(urgent_pointer))
+    #print("// Urgent Pointer Size: " + str(urgent_pointer))
+    #print("// Hex Urgent Pointer Size: " + hex(urgent_pointer))
 
     header_words[4] = do_word(header_words[4], checksum & 0x0000FFFF, 16)
     header_words[4] = do_word(header_words[4], urgent_pointer & 0x0000FFFF, 0)
-    print("// Quinto Word del header: " + hex(header_words[4]))
+    #print("// Quinto Word del header: " + hex(header_words[4]))
 
     # -----------------------------------------------------------------
 
@@ -300,9 +299,9 @@ def encode_segment(header_words, body_words):
 
     all_words[4] = do_word(all_words[4], checksum, 16)
 
-    print("\n//----- CALCULANDO CHECKSUM -----//\n")
-    print("(Encoding) Calculated Checksum: " + hex(checksum))
-    print("(Encoding) New Header Words: ")
+    #print("\n//----- CALCULANDO CHECKSUM -----//\n")
+    #print("(Encoding) Calculated Checksum: " + hex(checksum))
+    #print("(Encoding) New Header Words: ")
 
     # Encode segment
     for word in all_words:
@@ -310,9 +309,9 @@ def encode_segment(header_words, body_words):
         if len(hex_word) < 8:
             for i in range(8 - len(hex_word)):
                 hex_word = "0" + hex_word
-        print(hex_word)
+        #print(hex_word)
         hex_stream += hex_word
 
-    print("\n//----- HEX STREAM A ENVIAR -----//\n")
-    print(hex_stream)
+    #print("\n//----- HEX STREAM A ENVIAR -----//\n")
+    #print(hex_stream)
     return hex_stream

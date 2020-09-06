@@ -23,7 +23,6 @@ if __name__ == '__main__':
         elif mode == "s":
             # Configure Logger
             logger = log.Logger(1, 'server.log')
-            logger.log_this("Server is ready")
 
             # Start Server
             server.server_run(logger)
