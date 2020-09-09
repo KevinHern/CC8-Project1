@@ -3,6 +3,7 @@ import os
 import random
 import tcp
 import log
+from multiprocessing import Process, Lock, Manager
 
 src_port = "DT"
 message_number = 1
@@ -69,32 +70,57 @@ def get_filename(logger, udpsocket, destiny_port):
             pass
 
     # Process the real filename
-    filename = ""
-    for word in body_response:
-        # Checking how much to convert
-        chars_to_convert = 0
-        if word & 0x00FFFFFF == 0:
-            chars_to_convert = 1
-        elif word & 0x0000FFFF == 0:
-            chars_to_convert = 2
-        elif word & 0x000000FF == 0:
-            chars_to_convert = 3
-        else:
-            chars_to_convert = 4
-
-        for i in range(chars_to_convert):
-            int_to_char = (word >> (8*(3-i))) & 0x000000FF   # Shift right arithmetic
-            filename += chr(int_to_char)
-            #print(chr(int_to_char))
+    filename = bytearray.fromhex(body_response).decode()
 
     return filename
 
 
-def save_file(logger, udpsocket, destiny_port, filename):
-    # Creating File
-    file = open(filename, "w")
+def process_byte_stream(body_response, lock, byte_list, index):
+    chunk_bytes = []
+    for word in body_response:
 
+        # Checking if word has padding
+        byte_length = 0
+        if (word & 0x00FFFFFF) == 0:
+            byte_length = 1
+            word = (word >> 24) & 0x000000FF
+        elif (word & 0x0000FFFF) == 0:
+            byte_length = 2
+            word = (word >> 16) & 0x0000FFFF
+        elif (word & 0x000000FF) == 0:
+            byte_length = 3
+            word = (word >> 8) & 0x00FFFFFF
+        else:
+            byte_length = 4
+
+        chunk_bytes += [word.to_bytes(length=byte_length, byteorder='big', signed=False)]
+        #print("Bytes: " + str(word.to_bytes(length=byte_length, byteorder='big', signed=False)))
+
+    lock.acquire()
+    byte_list += [[index, chunk_bytes]]
+    lock.release()
+
+
+def save_file(logger, filename, hex_stream):
+    logger.log_this("(Child Process) Saving file...")
+
+    # Creating File
+    file = open(filename, "ab")
+    search_chunk = 0
+
+    file.write(bytes.fromhex(hex_stream))
+
+    logger.log_this("(Child Process) Saved file successfully")
+
+
+def get_file(logger, udpsocket, destiny_port, filename):
     logger.log_this("Starting file transfer")
+    byte_list = Manager().list()
+    lock_byte_list = Lock()
+    processes = []
+    index = 0
+    message_number = 50
+    file_hex_stream = ""
     while True:
         try:
             response = udpsocket.recvfrom(tcp.socket_buffer_size)
@@ -103,23 +129,43 @@ def save_file(logger, udpsocket, destiny_port, filename):
             header_fields, body_response = tcp.process_segment(logger, response[0], 0)
             if header_fields is None:
                 continue
+            #print("flags: " + hex(header_fields[5]))
             if (header_fields[5] & tcp.PUSH) > 0:
                 logger.log_this("Data received. Saving byte stream...")
                 # Sending ACK
                 seq = 50
-                header = tcp.make_tcp_header_words(src_port, header_fields[0], seq, header_fields[2] + 1,
+                header = tcp.make_tcp_header_words(src_port, destiny_port, seq, header_fields[2] + 1,
                                                    tcp.ACK)
                 segment = tcp.encode_segment(header, [])
-                tcp.send_ack(logger, udpsocket, address, seq + 1, segment, 1)
+                tcp.send_ack(logger, udpsocket, address, segment, message_number)
 
-                # Saving byte stream here. Create a Thread to handle this operation
+                if len(body_response) > 0:
+                    file_hex_stream += body_response
 
+                # Saving byte stream here and process it. Create a Thread to handle this operation
+                #process = Process(target=process_byte_stream, args=[body_response, lock_byte_list, byte_list, index])
+                #process.start()
+                #processes.append(process)
+                index += 1
+                message_number += 1
+            elif header_fields[5] & tcp.FIN:
+                logger.log_this("File Transfer complete.")
+                break
             else:
-                logger.log_this("Rejected connection. SYN not found")
+                logger.log_this("Rejected segment. PUSH not found")
         except timeout:
+            for process in processes:
+                process.join()
             break
-    logger.log_this("File Transfer complete.")
-    pass
+
+    # --------------------------- SAVING FILE
+
+    #for process in processes:
+    #    process.join()
+    #print("File Hex Stream: " + file_hex_stream)
+    save_process = Process(target=save_file, args=[logger, filename, file_hex_stream])
+    save_process.start()
+    return save_process
 
 
 def end(logger, udpsocket, destiny_port):
@@ -175,13 +221,17 @@ def server_run(logger):
 
     # --------------------------- GET FILE EXTENSION
 
-    response = get_filename(logger, udpsocket, client_port)
-    logger.log_this("Filename received: " + response)
+    filename = get_filename(logger, udpsocket, client_port)
+    logger.log_this("Filename received: " + filename)
 
     # --------------------------- SAVING FILE
 
-
+    save_process = get_file(logger, udpsocket, client_port, filename)
 
     # --------------------------- END CONNECTION
 
     end(logger, udpsocket, client_port)
+
+    # --------------------------- WAITING FOR CHILD PROCESS TO COMPLETE EXECUTION
+
+    save_process.join()

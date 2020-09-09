@@ -11,6 +11,8 @@ FIN = 0x001
 SYN = 0x002
 PUSH = 0x008
 ACK = 0x010
+max_segment_length = 740
+
 
 def process_segment(logger, response, expected_ack):        # Proceso el Stream de hex que he recibido
     # Getting the response and setting auxiliary variables
@@ -20,11 +22,12 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
     word_count = 0
     segment_words = []
     hexes_to_read = 0
-    print("Received: " + response + "\n")
-    print("Length: " + str(total_hexes) + "\n")
+    #print("Received: " + response + "\n")
+    #print("Length: " + str(total_hexes) + "\n")
 
     # The stream is a string of hexes. Time to decode them
     # To make things easier, make chunks of 8 hexes
+    #print("Starting to parse hex stream")
     while hexes_read < total_hexes:
         # Setting how many hexes to read.
         # There may be cases that there are less than 8 hexes left to read
@@ -50,8 +53,14 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
 
     # --------------------------------- CHECKSUM
 
+    #print("All words: ")
+    #for x in segment_words:
+    #    print(hex(x))
+
     # Extracting the checksum that is burned in the header of the received segment
+    #print("Checksum in header before modification: " + hex(segment_words[4]))
     checksum = (segment_words[4] >> 16) & 0x0000FFFF
+    #print("Checksum in header after modification: " + hex(checksum))
 
     # Setting said checksum to 0.
     # This is done accordingly to the RFC 793 to calculate the checksum on the receiving side
@@ -64,8 +73,8 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
         this_checksum += ((word & 0xFFFF0000) >> 16) + (word & 0x0000FFFF)
     this_checksum = ~this_checksum & 0x0000FFFF
 
-    #print("Header burned checksum: " + hex(this_checksum))
-    #print("Calculated checksum: " + hex(checksum))
+    #print("Header burned checksum: " + hex(checksum))
+    #print("Calculated checksum: " + hex(this_checksum))
     if checksum != this_checksum:
         logger.log_this("Checksums do not match, discarding segment.")
         return None, "Checksum"
@@ -134,9 +143,9 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
     header_words = [srcp, dstp, sequence, ack, offset, flags, windows, checksum, urgent_pointer, options]
     '''
     header_fields = [srcp, dstp, sequence, ack, offset, flags, windows, checksum, urgent_pointer]
-    body_words = segment_words
+    body = response[40:] if len(response) > 40 else ""
 
-    return header_fields, body_words
+    return header_fields, body
 
 
 def read(logger, udpsocket, address):
@@ -153,7 +162,8 @@ def send_ack(logger, udpsocket, address, message, message_number):
 
 # Send the hex stream AND expect an ACK
 def send(logger, udpsocket, address, expected_ack, message, message_number):
-    #print("Message: " + message)
+    #print("Message: ")
+    #print(message)
     while True:
         udpsocket.sendto(str.encode(message), address)
         logger.log_this("TCP segment #" + str(message_number) + " sent...")
@@ -306,11 +316,16 @@ def encode_segment(header_words, body_words):
 
     header_words[4] = do_word(header_words[4], checksum, 0)
 
-    #print("\n//----- CALCULANDO CHECKSUM -----//\n")
+    #print("All words: ")
+    #for x in all_words:
+    #    print(hex(x))
     #print("(Encoding) Calculated Checksum: " + hex(checksum))
     #print("(Encoding) New Header Words: ")
+    #for word in header_words:
+    #    print("Header word: " + hex(word))
 
     # Encode header segment
+    head_stream = ""
     for word in header_words:
         hex_word = format(word, 'x').upper()
         #print("Hex Word to Encode: " + hex_word)
@@ -319,25 +334,44 @@ def encode_segment(header_words, body_words):
             for i in range(8 - len(hex_word)):
                 hex_word = "0" + hex_word
         #print("Hex Word Encoded: " + hex_word)
-        hex_stream += hex_word
+        head_stream += hex_word
 
-    # Encode body segment
+    # ---------------------------- ENCODE BODY SEGMENTS
+
+    # Encode everything else.
+    body_stream = ""
+
+    # Last word is problematic, do different analysis
+    last_word = ""
+    if len(body_words) > 0:
+        last_word = body_words.pop(-1)
+        total_hex = 0
+        if (last_word & 0x00FFFFFF) == 0:
+            total_hex = 2
+            last_word = (last_word >> 24) & 0x000000FF
+        elif (last_word & 0x0000FFFF) == 0:
+            total_hex = 4
+            last_word = (last_word >> 16) & 0x0000FFFF
+        elif (last_word & 0x000000FF) == 0:
+            total_hex = 6
+            last_word = (last_word >> 8) & 0x00FFFFFF
+        else:
+            total_hex = 8
+
+        last_word = format(last_word, 'x').upper()
+        last_word = ('0' * (total_hex - len(last_word))) + last_word
+
+
     for word in body_words:
         hex_word = format(word, 'x').upper()
 
-        # Checking how much to send
-        if word & 0x00FFFFFF == 0:
-            hex_word = hex_word[0:2]
-        elif word & 0x0000FFFF == 0:
-            hex_word = hex_word[0:4]
-        elif word & 0x000000FF == 0:
-            hex_word = hex_word[0:6]
-        else:
-            pass
+        if len(hex_word) < 8:
+            for i in range(8 - len(hex_word)):
+                hex_word = "0" + hex_word
 
-        hex_stream += hex_word
+        body_stream += hex_word
 
+    stream = head_stream + body_stream + last_word
+    stream = stream[0:max_segment_length] if len(stream) > 700 else stream
 
-    print("\n//----- HEX STREAM A ENVIAR -----//\n")
-    print(hex_stream)
-    return hex_stream
+    return stream
