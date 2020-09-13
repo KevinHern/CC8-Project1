@@ -67,7 +67,7 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
     # This is done accordingly to the RFC 793 to calculate the checksum on the receiving side
     segment_words[4] = segment_words[4] & 0x0
 
-    '''
+
     # Calculate the checksum
     this_checksum = 0x00000000
     for word in segment_words:
@@ -75,13 +75,13 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
         this_checksum += ((word & 0xFFFF0000) >> 16) + (word & 0x0000FFFF)
     this_checksum = ~this_checksum & 0x0000FFFF
 
-    print("Header burned checksum: " + hex(checksum))
-    print("Calculated checksum: " + hex(this_checksum))
+    #print("Header burned checksum: " + hex(checksum))
+    #print("Calculated checksum: " + hex(this_checksum))
     if checksum != this_checksum:
         logger.log_this("Checksums do not match, discarding segment.")
         return None, "Checksum"
     
-    '''
+
 
     # --------------------------------- PROCESS SEGMENT
 
@@ -103,8 +103,8 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
 
     #print("Header burned ack: " + hex(expected_ack))
     #print("Expected ACK: " + hex(ack))
-    if (expected_ack != ack) and ((flags & ACK) > 0):
-        logger.log_this("Acks do not match, discarding segment.")
+    if (expected_ack != ack):
+        logger.log_this("Acks do not match, discarding segment. Expected ACK: " + str(expected_ack) + " | Received ACK: " + str(ack))
         return None, "Ack"
 
     # Urgent pointer
@@ -160,6 +160,12 @@ def read(logger, udpsocket, address):
 
 # Just sends and ACK
 def send_ack(logger, udpsocket, address, message, message_number):
+    #print("Message: ")
+    #print(message)
+    #print("Message in byte array: ")
+    message_array = bytearray.fromhex(message)
+    #print(message_array)
+    #print("Length of Byte array: " + str(len(message_array)))
     udpsocket.sendto(bytearray.fromhex(message), address)
     logger.log_this("TCP ACK #" + str(message_number) + " sent...")
 
@@ -170,8 +176,8 @@ def send(logger, udpsocket, address, expected_ack, message, message_number):
     #print(message)
     #print("Message in byte array: ")
     message_array = bytearray.fromhex(message)
-    print(message_array)
-    print("Length of Byte array: " + str(len(message_array)))
+    #print(message_array)
+    #print("Length of Byte array: " + str(len(message_array)))
     while True:
         udpsocket.sendto(message_array, address)
         logger.log_this("TCP segment #" + str(message_number) + " sent...")
@@ -340,17 +346,17 @@ def encode_segment(header_words, body_words):
 
     all_words = header_words + body_words
 
-    '''
+
     # Calculate checksum
     checksum = 0x00000000
     for word in all_words:
         checksum += ((word & 0xFFFF0000) >> 16) + (word & 0x0000FFFF)
     checksum = (~checksum << 16) & 0xFFFF0000
     
-    print("// Calculated Checksum before sending: " + hex(checksum))
+    #print("// Calculated Checksum before sending: " + hex(checksum))
 
     header_words[4] = do_word(header_words[4], checksum, 0)
-    '''
+
 
 
     #print("// All words before sending:")

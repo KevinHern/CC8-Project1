@@ -156,7 +156,7 @@ def get_file(logger, tcpsocket, destiny_port, filename, client_address):
                 tcp.send(logger, tcpsocket, client_address, 21, segment, 1)
                 break
             else:
-                logger.log_this("Rejected segment. ACK received: " + str(header_fields[2]))
+                logger.log_this("Rejected segment. SEQ received: " + str(header_fields[2]) + " | Expected SEQ: " + str(expected_seq))
         except timeout:
             for process in processes:
                 process.join()
