@@ -59,7 +59,7 @@ def get_filename(logger, tcpsocket, destiny_port, client_address):
                 logger.log_this("Data received.")
                 # Sending ACK
                 seq = 2
-                header = tcp.make_tcp_header_words(src_port, destiny_port, seq, header_fields[2] + 1, tcp.ACK)
+                header = tcp.make_tcp_header_words(src_port, destiny_port, seq, header_fields[2] + 1, tcp.NONE)
                 segment = tcp.encode_segment(header, [])
                 tcp.send_ack(logger, tcpsocket, client_address, segment, 2)
                 break
