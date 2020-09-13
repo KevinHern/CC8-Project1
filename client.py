@@ -79,8 +79,9 @@ def handshake(logger, udpsocket, address):
     header_fields, body_response = [], []
     while True:
         logger.log_this("Sending SYN. SEQ = " + str(seq) + ". Expected ACK: " + str(seq+1))
-        header_fields, body_response = tcp.send(logger, udpsocket, address, seq+1, segment, 1)
-        if (header_fields[5] & (tcp.ACK | tcp.SYN)) > 0 and ((seq + 1) == header_fields[3]):
+        header_fields, body_response = tcp.send(logger, udpsocket, address, seq+1, segment, tcp.NONE)
+        #if (header_fields[5] & (tcp.ACK | tcp.SYN)) > 0 and ((seq + 1) == header_fields[3]):
+        if (header_fields[2] == 1) and (header_fields[3] == 2):
             logger.log_this("ACK Received. Destination port identified: " + header_fields[0])
             break
         else:
@@ -93,13 +94,13 @@ def handshake(logger, udpsocket, address):
 
     # Probably should make a new loop in case the server does not receive the ACK... eh
     logger.log_this("Enviando ACK. SEQ =" + str(seq))
-    tcp.send_ack(logger, udpsocket, address, segment, 2)
+    tcp.send_ack(logger, udpsocket, address, segment, tcp.NONE)
 
     logger.log_this("Handshake complete. Connection established.")
-    return header_fields[1]
+    return header_fields[0]
 
 
-def send_file_extension(logger, udpsocket, destiny_port, address, files):
+def send_file_extension(logger, tcpsocket, destiny_port, address, files):
     # ------------------------ ASK FILE
 
     print("Select what file to send")
@@ -142,8 +143,8 @@ def send_file_extension(logger, udpsocket, destiny_port, address, files):
     header_fields, body_response = [], []
     while True:
         logger.log_this("Sending filename: '" + filename_to_send + "'. SEQ = " + str(seq) + ". Expected ACK: " + str(seq + 1))
-        header_fields, body_response = tcp.send(logger, udpsocket, address, seq + 1, segment, 3)
-        if (header_fields[5] & tcp.ACK) > 0 and ((seq + 1) == header_fields[3]):
+        header_fields, body_response = tcp.send(logger, tcpsocket, address, seq + 1, segment, tcp.NONE)
+        if header_fields[3] == 51:
             logger.log_this("ACK Received. Proceeding to sending the file contents.")
             break
         else:
@@ -151,7 +152,7 @@ def send_file_extension(logger, udpsocket, destiny_port, address, files):
     return filename_to_send
 
 
-def end(logger, udpsocket, destiny_port, address):
+def end(logger, tcpsocket, destiny_port, address):
     logger.log_this("Terminating connection...")
 
     seq = 20
@@ -163,17 +164,18 @@ def end(logger, udpsocket, destiny_port, address):
     header_fields, body_response = [], []
     while True:
         logger.log_this("Sending FIN. SEQ = " + str(seq) + ". Expected ACK: " + str(seq + 1))
-        header_fields, body_response = tcp.send(logger, udpsocket, address, seq + 1, segment, 1)
-        if ((header_fields[5] & (tcp.ACK | tcp.FIN)) > 0) and ((seq + 1) == header_fields[3]):
+        header_fields, body_response = tcp.send(logger, tcpsocket, address, seq + 1, segment, tcp.NONE)
+        #if ((header_fields[5] & (tcp.ACK | tcp.FIN)) > 0) and ((seq + 1) == header_fields[3]):
+        if 21 == header_fields[3]:
             logger.log_this("ACK Received. Sever terminating connection too")
             # Send ACK
             seq += 1
-            header = tcp.make_tcp_header_words(src_port, destiny_port, seq, header_fields[2] + 1, tcp.ACK)
+            header = tcp.make_tcp_header_words(src_port, destiny_port, seq, header_fields[2] + 1, tcp.NONE)
             segment = tcp.encode_segment(header, [])
 
             # Probably should make a new loop in case the server does not receive the ACK... eh
             logger.log_this("Enviando ACK. SEQ =" + str(seq))
-            tcp.send_ack(logger, udpsocket, address, segment, 2)
+            tcp.send_ack(logger, tcpsocket, address, segment, 2)
             break
         else:
             logger.log_this("Received a wrong response, resending")
@@ -187,29 +189,31 @@ def client_run(logger):
     logger = logger
 
     # Host (URL/IP)
-    #host = input("Provide Host:\t")
-    host = "127.0.0.1"
+    host = input("Provide Host:\t")
+    #host = "127.0.0.1"
     # Port Number
-    #port = int(input("Provide a valid Port Number:\t"))
-    port = 8080
+    port = int(input("Provide a valid Port Number:\t"))
+    #port = 8080
     while (port < 0) or (port > 65535): port = int(input("Provide a valid Port Number:\t"))
     address = (host, port)
 
     # ---------------------------
 
     # Socket Creation
-    udpsocket = socket(family=AF_INET, type=SOCK_DGRAM)
-    udpsocket.settimeout(tcp.RTT)
+    tcpsocket = socket(family=AF_INET, type=SOCK_STREAM)
+    tcpsocket.connect(address)
+    tcpsocket.settimeout(tcp.RTT)
     logger.log_this("Client is ready")
 
     # --------------------------- HANDSHAKE
 
-    dst_port = handshake(logger, udpsocket, address)
+    dst_port = handshake(logger, tcpsocket, address)
+
 
     # --------------------------- SEND FILE EXTENSION
     # Ask what file to send
     file_list = ["test.txt", "ensayo.txt", "500B.jpg", "1KB.jpg", "2KB.jpg", "5KB.jpg", "Pew.mp3", "genial.png"]
-    filename = send_file_extension(logger, udpsocket, dst_port, address, file_list)
+    filename = send_file_extension(logger, tcpsocket, dst_port, address, file_list)
 
     # --------------------------- READ FILE
 
@@ -219,7 +223,7 @@ def client_run(logger):
     # --------------------------- SEND FILE
 
     sequence = 51
-    segment_number = 4
+    segment_number = 1
     logger.log_this("Starting file transfer...")
 
     while len(stream_to_send) > 0:
@@ -227,15 +231,16 @@ def client_run(logger):
         stream_to_send, body_words = make_body_segment(stream_to_send)
 
         # Create header
-        segment_header_words = tcp.make_tcp_header_words(src_port, dst_port, sequence, sequence + 1, tcp.PUSH)
+        segment_header_words = tcp.make_tcp_header_words(src_port, dst_port, sequence, 0, tcp.NONE)
         segment = tcp.encode_segment(segment_header_words, body_words)
 
         # Send here
-        tcp.send(logger, udpsocket, address, sequence + 1, segment, segment_number)
+        tcp.send(logger, tcpsocket, address, sequence + 1, segment, segment_number)
         sequence += + 1
         segment_number += 1
 
     logger.log_this("Transfer done")
     # --------------------------- END CONNECTION
 
-    end(logger, udpsocket, dst_port, address)
+    end(logger, tcpsocket, dst_port, address)
+    tcpsocket.close()
