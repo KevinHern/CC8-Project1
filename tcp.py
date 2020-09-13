@@ -23,8 +23,8 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
     word_count = 0
     segment_words = []
     hexes_to_read = 0
-    print("Received: " + response + "\n")
-    print("Length: " + str(total_hexes) + "\n")
+    #print("Received: " + response + "\n")
+    #print("Length: " + str(total_hexes) + "\n")
 
     # The stream is a string of hexes. Time to decode them
     # To make things easier, make chunks of 8 hexes
@@ -54,9 +54,9 @@ def process_segment(logger, response, expected_ack):        # Proceso el Stream 
 
     # --------------------------------- CHECKSUM
 
-    print("// All words decoded: ")
-    for x in segment_words:
-        print(hex(x))
+    #print("// All words decoded: ")
+    #for x in segment_words:
+    #    print(hex(x))
 
     # Extracting the checksum that is burned in the header of the received segment
     #print("Checksum in header before modification: " + hex(segment_words[4]))
@@ -166,11 +166,12 @@ def send_ack(logger, udpsocket, address, message, message_number):
 
 # Send the hex stream AND expect an ACK
 def send(logger, udpsocket, address, expected_ack, message, message_number):
-    print("Message: ")
-    print(message)
-    print("Message in byte array: ")
+    #print("Message: ")
+    #print(message)
+    #print("Message in byte array: ")
     message_array = bytearray.fromhex(message)
     print(message_array)
+    print("Length of Byte array: " + str(len(message_array)))
     while True:
         udpsocket.sendto(message_array, address)
         logger.log_this("TCP segment #" + str(message_number) + " sent...")
@@ -185,7 +186,8 @@ def send(logger, udpsocket, address, expected_ack, message, message_number):
 
             # Resend if ack or checksum does not match
             if header_words is None:
-                logger.log_this(body_words + " does not match, resending")
+                logger.log_this(body_words + " does not match: Sent ACK: " + str(expected_ack) +
+                                " | Received ACK: " + str(make_tcp_header_words([3])) + ". Resending")
                 continue
             else:
                 return header_words, body_words
@@ -368,8 +370,8 @@ def encode_segment(header_words, body_words):
 
     stream = head_stream + body_stream
 
-    print("\n//----- Hex stream a enviar -----//")
-    print(stream)
+    #print("\n//----- Hex stream a enviar -----//")
+    #print(stream)
     stream = stream[0:max_segment_length] if len(stream) > 740 else stream
 
     return stream

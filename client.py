@@ -148,7 +148,7 @@ def send_file_extension(logger, tcpsocket, destiny_port, address, files):
             logger.log_this("ACK Received. Proceeding to sending the file contents.")
             break
         else:
-            logger.log_this("Received a wrong response, resending")
+            logger.log_this("Received wrong ACK: " + str(header_fields[3]) + ", resending")
     return filename_to_send
 
 
@@ -178,7 +178,7 @@ def end(logger, tcpsocket, destiny_port, address):
             tcp.send_ack(logger, tcpsocket, address, segment, 2)
             break
         else:
-            logger.log_this("Received a wrong response, resending")
+            logger.log_this("Received wrong ACK: " + str(header_fields[3]) + ", resending")
 
 
     logger.log_this("Connection terminated successfully...")
@@ -212,7 +212,7 @@ def client_run(logger):
 
     # --------------------------- SEND FILE EXTENSION
     # Ask what file to send
-    file_list = ["test.txt", "ensayo.txt", "500B.jpg", "1KB.jpg", "2KB.jpg", "5KB.jpg", "Pew.mp3", "genial.png"]
+    file_list = ["test.txt", "5KB.txt", "500B.jpg", "1KB.jpg", "2KB.jpg", "5KB.jpg", "Pew.mp3", "genial.png"]
     filename = send_file_extension(logger, tcpsocket, dst_port, address, file_list)
 
     # --------------------------- READ FILE
